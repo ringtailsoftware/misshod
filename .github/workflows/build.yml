@@ -1,0 +1,29 @@
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{matrix.os}}
+    steps:
+      - name: Checkout misshod
+        uses: actions/checkout@v2
+        with:
+          path: misshod
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v1
+        with:
+          version: 0.14.0
+      - name: Build test
+        run: zig build test
+        working-directory: misshod
+      - name: Build lib
+        run: zig build
+        working-directory: misshod
+      - name: Build mssh
+        run: zig build
+        working-directory: misshod/mssh
+
