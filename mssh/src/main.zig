@@ -1,9 +1,6 @@
 const std = @import("std");
 const posix = std.posix;
-const Connection = @import("connection.zig").Connection;
-const Misshod = @import("misshod");
-const Session = Misshod.Session;
-const SessionEvent = Misshod.SessionEvent;
+const Misshod = @import("misshod").Misshod;
 
 // Turn off echo and read a password
 fn readPassphrase(password_buf: []u8) ![]u8 {
@@ -100,123 +97,137 @@ pub fn main() !void {
 
     if (host_opt) |host| {
         if (user_opt) |user| {
-            var connection = Connection.connectToHost(allocator, host, port) catch |err| {
+            var stream = std.net.tcpConnectToHost(allocator, host, port) catch |err| {
                 switch (err) {
                     posix.ConnectError.ConnectionRefused => std.debug.print("ConnectionRefused\n", .{}),
                     else => std.debug.print("{any}\n", .{err}),
                 }
                 return;
             };
-            defer connection.close();
+            defer stream.close();
 
             // make a reasonable prng
             var seed: [std.Random.DefaultCsprng.secret_seed_length]u8 = undefined;
             try posix.getrandom(&seed);
             var prng = std.Random.DefaultCsprng.init(seed);
 
-            var session = try Session.init(prng.random(), user);
-            defer session.deinit(allocator);
+            var misshod = try Misshod.init(prng.random(), user, allocator);
+            defer misshod.deinit(allocator);
 
-            //            try raw_mode_start();
             defer raw_mode_stop();
 
-            outer: while (session.isActive()) {
-                if (!session.canSend()) {
-                    try session.advance(allocator);
-                }
+            var iobuf: [8]u8 = undefined; // could be any size
+            var quit = false;
+            const stdin_reader = std.io.getStdIn();
 
-                if (session.canSend()) {
-                    const stdin_reader = std.io.getStdIn();
-
-                    var fds = [_]std.posix.pollfd{
-                        .{
-                            .fd = connection.stream.?.handle,
-                            .events = std.posix.POLL.IN, // incoming socket data
-                            .revents = undefined,
-                        },
-                        .{
-                            .fd = stdin_reader.handle,
-                            .events = std.posix.POLL.IN,
-                            .revents = undefined,
-                        },
-                    };
-
-                    const ready = std.posix.poll(&fds, 1000) catch 0;
-                    if (ready > 0) {
-                        if (fds[0].revents & std.posix.POLL.IN > 0) {
-                            // socket data
-                            //std.debug.print("NETDATA\n", .{});
-                            try session.handleEventRsp(allocator, SessionEvent.NetDataAvailable);
-                            continue :outer;
-                        }
-                        if (fds[1].revents & std.posix.POLL.IN > 0) {
-                            // kb data
-                            var buf: [128]u8 = undefined;
-                            const count = stdin_reader.read(&buf) catch 0;
-                            if (count > 0) {
-                                try session.handleEventRsp(allocator, SessionEvent{ .SessionSend = buf[0..count] });
+            outer: while (!quit) {
+                const ev = try misshod.getNextEvent();
+                switch (ev) {
+                    .Event => |eventCode| {
+                        switch (eventCode) {
+                            .Connected => {
+                                std.debug.print("Connected!\n", .{});
+                                try misshod.clearEvent(eventCode);
+                                try raw_mode_start();
+                            },
+                            .RxData => |buf| {
+                                const stdout_writer = std.io.getStdOut().writer();
+                                try stdout_writer.print("{s}", .{buf});
+                                try misshod.clearEvent(eventCode);
+                            },
+                            .EndSession => |reason| {
+                                std.debug.print("Session ended: {any}\n", .{reason});
+                                quit = true;
                                 continue :outer;
-                            }
+                            },
+                            .CheckHostKey => |keydata| {
+                                // make a decision about whether to accept host key
+                                // a real client could check ~/.ssh/known_hosts
+                                var fingerprint_buf: [512]u8 = undefined;
+                                std.debug.assert(std.base64.standard.Encoder.calcSize(keydata.?.len) <= fingerprint_buf.len);
+                                const fingerprint = std.base64.standard.Encoder.encode(&fingerprint_buf, keydata.?);
+                                std.debug.print("Auto accepting host key {s}\n", .{fingerprint});
+                                try misshod.clearEvent(eventCode);
+                            },
+                            .GetPrivateKey => {
+                                if (args.len >= 4) { // id file provided
+                                    const keydata_ascii = std.fs.cwd().readFileAlloc(allocator, args[3], 1024) catch {
+                                        std.debug.print("Failed to open idfile {s}\n", .{args[3]});
+                                        std.process.exit(1);
+                                    };
+                                    try misshod.setPrivateKey(keydata_ascii);
+                                    allocator.free(keydata_ascii);
+                                }
+                                try misshod.clearEvent(eventCode);
+                            },
+                            .GetKeyPassphrase => {
+                                var password_buf: [128]u8 = undefined;
+                                std.debug.print("Password for private key decrypt: ", .{});
+                                try misshod.setPrivateKeyPassphrase(try readPassphrase(&password_buf));
+                                try misshod.clearEvent(eventCode);
+                            },
+                            .GetAuthPassphrase => {
+                                var password_buf: [128]u8 = undefined;
+                                std.debug.print("Password for auth: ", .{});
+                                try misshod.setAuthPassphrase(try readPassphrase(&password_buf));
+                                try misshod.clearEvent(eventCode);
+                            },
                         }
-                    }
-                }
+                    },
+                    .ReadyToConsume, .ReadyToProduce => |len| {
+                        var pollevts: i16 = 0;
 
-                switch (session.getNextEvent()) {
-                    .Connected => {
-                        //std.debug.print("**** CONNECTED\n", .{});
-                        try session.handleEventRsp(allocator, SessionEvent.Connected); // ack
-                        try raw_mode_start();
-                    },
-                    .None, .SessionSend, .NetDataAvailable => {},
-                    .SessionRecv => |buf| {
-                        std.debug.print("{s}", .{buf.?});
-                        try session.handleEventRsp(allocator, SessionEvent{ .SessionRecv = null }); // ack
-                    },
-                    .SessionRecvExt => |buf| {
-                        std.debug.print("{s}", .{buf.?});
-                        try session.handleEventRsp(allocator, SessionEvent{ .SessionRecvExt = null }); // ack
-                    },
-                    .NetReadReq => |buf| {
-                        //std.debug.print(".NetReadReq {d}\n", .{buf.len});
-                        const x = try connection.read(buf, 2000);
-                        std.debug.assert(x.len == buf.len);
-                        try session.handleEventRsp(allocator, SessionEvent{ .NetReadReq = buf });
-                    },
-                    .NetWriteReq => |buf| {
-                        //std.debug.print(".NetWriteReq {x}\n", .{buf.?});
-                        _ = try connection.write(buf.?, 2000);
-                        try session.handleEventRsp(allocator, SessionEvent{ .NetWriteReq = null });
-                    },
-                    .HostKeyValidateReq => |keydata| {
-                        // make a decision about whether to accept host key
-                        // a real client could check ~/.ssh/known_hosts
-                        var fingerprint_buf: [512]u8 = undefined;
-                        std.debug.assert(std.base64.standard.Encoder.calcSize(keydata.?.len) <= fingerprint_buf.len);
-                        const fingerprint = std.base64.standard.Encoder.encode(&fingerprint_buf, keydata.?);
-                        std.debug.print("Auto accepting host key {s}\n", .{fingerprint});
-                        try session.handleEventRsp(allocator, SessionEvent{ .HostKeyValidateReq = null });
-                    },
-                    .KeyReq => {
-                        if (args.len >= 4) { // id file provided
-                            const keydata_ascii = std.fs.cwd().readFileAlloc(allocator, args[3], 1024) catch {
-                                std.debug.print("Failed to open idfile {s}\n", .{args[3]});
-                                std.process.exit(1);
-                            };
-                            try session.handleEventRsp(allocator, SessionEvent{ .KeyReq = keydata_ascii });
-                            allocator.free(keydata_ascii);
+                        if (ev == .ReadyToConsume) {
+                            pollevts |= std.posix.POLL.IN;
                         } else {
-                            try session.handleEventRsp(allocator, SessionEvent{ .KeyReq = null });
+                            pollevts |= std.posix.POLL.OUT;
                         }
-                    },
-                    .KeyReqPassphrase => {
-                        var password_buf: [128]u8 = undefined;
-                        std.debug.print("Password private key decrypt: ", .{});
-                        try session.handleEventRsp(allocator, SessionEvent{ .KeyReqPassphrase = try readPassphrase(&password_buf) });
-                    },
-                    .UserReqPassphrase => {
-                        var password_buf: [128]u8 = undefined;
-                        std.debug.print("Password for {s}@{s}: ", .{ user, host });
-                        try session.handleEventRsp(allocator, SessionEvent{ .UserReqPassphrase = try readPassphrase(&password_buf) });
+
+                        var fds = [_]std.posix.pollfd{
+                            .{
+                                .fd = stream.handle,
+                                .events = pollevts,
+                                .revents = undefined,
+                            },
+                            .{
+                                .fd = stdin_reader.handle,
+                                .events = std.posix.POLL.IN,
+                                .revents = undefined,
+                            },
+                        };
+
+                        const ready = std.posix.poll(&fds, 1000) catch 0;
+                        if (ready > 0) {
+                            if (fds[0].revents & std.posix.POLL.IN > 0) { // socket is readable
+                                var bytes_to_read = len;
+                                if (bytes_to_read > iobuf.len) {
+                                    bytes_to_read = iobuf.len;
+                                }
+                                const nbytes = try stream.read(iobuf[0..bytes_to_read]);
+                                std.debug.assert(nbytes > 0);
+                                // misshod may not get as much as it asked for, but it can req more later
+                                //std.debug.print("Can consume {d}\n", .{len});
+                                try misshod.write(iobuf[0..nbytes]);
+                            }
+                            if (fds[0].revents & std.posix.POLL.OUT > 0) { // socket is writeable
+                                const towrite = try misshod.peek(4); // get data it wants to send up to a limit
+                                const bytes_written = try stream.write(towrite);
+                                //std.debug.print("bytes_written = {d} towrite={d}\n", .{bytes_written, towrite.len});
+                                // socket may not have accepted all of the bytes
+                                try misshod.consumed(bytes_written);
+                            }
+                            if (fds[1].revents & std.posix.POLL.IN > 0) { // keyboard data in
+                                const buf = try misshod.getChannelWriteBuffer();
+                                if (buf.len > 0) {
+                                    const count = stdin_reader.read(buf) catch 0;
+                                    if (count > 0) {
+                                        try misshod.channelWriteComplete(count);
+                                    }
+                                }
+                            }
+                        } else {
+                            //std.debug.print("timeout\n", .{});
+                        }
                     },
                 }
             }
