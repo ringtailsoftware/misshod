@@ -2,6 +2,11 @@ const std = @import("std");
 
 const targetEndian: std.builtin.Endian = .big;
 
+pub const BufferError = error{
+    ReaderOutOfDataErr,
+    WriterOutOfDataErr,
+};
+
 // Buffer representing SSH payloads containing types from https://datatracker.ietf.org/doc/html/rfc4251#section-5
 // Values are network order
 
@@ -17,9 +22,9 @@ pub const BufferReader = struct {
         };
     }
 
-    pub fn readBoolean(self: *Self) !bool {
+    pub fn readBoolean(self: *Self) BufferError!bool {
         if (self.off + 1 > self.payload.len) {
-            return error.ReaderOutOfDataErr;
+            return BufferError.ReaderOutOfDataErr;
         } else {
             const v = self.payload[self.off];
             self.off += 1;
@@ -27,9 +32,9 @@ pub const BufferReader = struct {
         }
     }
 
-    pub fn readU8(self: *Self) !u8 {
+    pub fn readU8(self: *Self) BufferError!u8 {
         if (self.off + 1 > self.payload.len) {
-            return error.ReaderOutOfDataErr;
+            return BufferError.ReaderOutOfDataErr;
         } else {
             const v = self.payload[self.off];
             self.off += 1;
@@ -37,17 +42,17 @@ pub const BufferReader = struct {
         }
     }
 
-    pub fn skip(self: *Self, n: usize) !void {
+    pub fn skip(self: *Self, n: usize) BufferError!void {
         if (self.off + n > self.payload.len) {
-            return error.ReaderOutOfDataErr;
+            return BufferError.ReaderOutOfDataErr;
         } else {
             self.off += n;
         }
     }
 
-    pub fn readBytes(self: *Self, n: usize) ![]const u8 {
+    pub fn readBytes(self: *Self, n: usize) BufferError![]const u8 {
         if (self.off + n > self.payload.len) {
-            return error.ReaderOutOfDataErr;
+            return BufferError.ReaderOutOfDataErr;
         } else {
             const sl = self.payload[self.off .. self.off + n];
             self.off += n;
@@ -55,9 +60,9 @@ pub const BufferReader = struct {
         }
     }
 
-    pub fn readU32(self: *Self) !u32 {
+    pub fn readU32(self: *Self) BufferError!u32 {
         if (self.off + 4 > self.payload.len) {
-            return error.ReaderOutOfDataErr;
+            return BufferError.ReaderOutOfDataErr;
         } else {
             const v = std.mem.bytesToValue(u32, self.payload[self.off .. self.off + 4]);
             self.off += 4;
@@ -65,13 +70,13 @@ pub const BufferReader = struct {
         }
     }
 
-    pub fn readU32LenString(self: *Self) ![]const u8 {
+    pub fn readU32LenString(self: *Self) BufferError![]const u8 {
         const len = try self.readU32();
         return try self.readBytes(len);
     }
 
     // for walking lists
-    pub fn skipU32LenString(self: *Self) !void {
+    pub fn skipU32LenString(self: *Self) BufferError!void {
         const len = try self.readU32();
         try self.skip(len);
     }
@@ -106,27 +111,27 @@ pub const BufferWriter = struct {
         self.payload = self.payload_buf[0..self.off];
     }
 
-    pub fn discard(self: *Self, n: usize) !void {
+    pub fn discard(self: *Self, n: usize) BufferError!void {
         if (self.off < n) {
-            return error.WriterOutOfDataErr;
+            return BufferError.WriterOutOfDataErr;
         } else {
             self.off -= n;
             self.updateUnderlying();
         }
     }
 
-    pub fn skip(self: *Self, n: usize) !void {
+    pub fn skip(self: *Self, n: usize) BufferError!void {
         if (self.off + n > self.payload_buf.len) {
-            return error.WriterOutOfDataErr;
+            return BufferError.WriterOutOfDataErr;
         } else {
             self.off += n;
             self.updateUnderlying();
         }
     }
 
-    pub fn writeBoolean(self: *Self, v: bool) !void {
+    pub fn writeBoolean(self: *Self, v: bool) BufferError!void {
         if (self.off + 1 > self.payload_buf.len) {
-            return error.WriterOutOfDataErr;
+            return BufferError.WriterOutOfDataErr;
         } else {
             self.payload_buf[self.off] = if (v) 1 else 0;
             self.off += 1;
@@ -134,9 +139,9 @@ pub const BufferWriter = struct {
         }
     }
 
-    pub fn writeU8(self: *Self, v: u8) !void {
+    pub fn writeU8(self: *Self, v: u8) BufferError!void {
         if (self.off + 1 > self.payload_buf.len) {
-            return error.WriterOutOfDataErr;
+            return BufferError.WriterOutOfDataErr;
         } else {
             self.payload_buf[self.off] = v;
             self.off += 1;
@@ -144,9 +149,9 @@ pub const BufferWriter = struct {
         }
     }
 
-    pub fn writeU32(self: *Self, v: u32) !void {
+    pub fn writeU32(self: *Self, v: u32) BufferError!void {
         if (self.off + 4 > self.payload_buf.len) {
-            return error.WriterOutOfDataErr;
+            return BufferError.WriterOutOfDataErr;
         } else {
             const net_v = std.mem.nativeTo(u32, v, targetEndian);
             @memcpy(self.payload_buf[self.off .. self.off + 4], std.mem.asBytes(&net_v));
@@ -155,9 +160,9 @@ pub const BufferWriter = struct {
         }
     }
 
-    pub fn writeBytes(self: *Self, v: []const u8) !void {
+    pub fn writeBytes(self: *Self, v: []const u8) BufferError!void {
         if (self.off + v.len > self.payload_buf.len) {
-            return error.WriterOutOfDataErr;
+            return BufferError.WriterOutOfDataErr;
         } else {
             @memcpy(self.payload_buf[self.off .. self.off + v.len], v);
             self.off += v.len;
@@ -165,12 +170,12 @@ pub const BufferWriter = struct {
         }
     }
 
-    pub fn writeMpint(self: *Self, v: []const u8) !void {
+    pub fn writeMpint(self: *Self, v: []const u8) BufferError!void {
         // if MSB of first byte is set, mpint must be padded
         // https://datatracker.ietf.org/doc/html/rfc4251#section-5
         const pad = v[0] & 0x80 > 0;
         if (self.off + v.len + 4 > self.payload_buf.len) {
-            return error.WriterOutOfDataErr;
+            return BufferError.WriterOutOfDataErr;
         } else {
             if (pad) {
                 try self.writeU32(@intCast(v.len + 1));
@@ -184,9 +189,9 @@ pub const BufferWriter = struct {
         }
     }
 
-    pub fn writeU32LenString(self: *Self, v: []const u8) !void {
+    pub fn writeU32LenString(self: *Self, v: []const u8) BufferError!void {
         if (self.off + v.len + 4 > self.payload_buf.len) {
-            return error.WriterOutOfDataErr;
+            return BufferError.WriterOutOfDataErr;
         } else {
             try self.writeU32(@intCast(v.len));
             try self.writeBytes(v);
@@ -201,7 +206,7 @@ test "buffer wr overflow" {
         try pkt.writeU8(0xAA);
     }
     // unable to write anymore
-    try std.testing.expectError(error.WriterOutOfDataErr, pkt.writeU8(0xBB));
+    try std.testing.expectError(BufferError.WriterOutOfDataErr, pkt.writeU8(0xBB));
 }
 
 test "buffer-skip" {
@@ -235,7 +240,7 @@ test "buffer" {
     var rd = BufferReader.init(buffer.active());
     try std.testing.expect(try rd.readU8() == 0x42);
     // no more available to read
-    try std.testing.expectError(error.ReaderOutOfDataErr, rd.readU8());
+    try std.testing.expectError(BufferError.ReaderOutOfDataErr, rd.readU8());
 
     // write 1 byte
     try buffer.writeU8(0x43);
@@ -247,7 +252,7 @@ test "buffer" {
     try std.testing.expect(try rd.readU8() == 0x42);
     try std.testing.expect(try rd.readU8() == 0x43);
     // no more available to read
-    try std.testing.expectError(error.ReaderOutOfDataErr, rd.readU8());
+    try std.testing.expectError(BufferError.ReaderOutOfDataErr, rd.readU8());
 
     // write u32
     try buffer.writeU32(0xDEADBEEF);
@@ -260,7 +265,7 @@ test "buffer" {
     try std.testing.expect(try rd.readU8() == 0x43);
     try std.testing.expect(try rd.readU32() == 0xDEADBEEF);
     // no more available to read
-    try std.testing.expectError(error.ReaderOutOfDataErr, rd.readU8());
+    try std.testing.expectError(BufferError.ReaderOutOfDataErr, rd.readU8());
 
     // write byte buf
     try buffer.writeBytes(&[_]u8{ 'h', 'e', 'l', 'l', 'o' });
@@ -274,7 +279,7 @@ test "buffer" {
     try std.testing.expect(try rd.readU32() == 0xDEADBEEF);
     try std.testing.expect(std.mem.eql(u8, try rd.readBytes(5), &[_]u8{ 'h', 'e', 'l', 'l', 'o' }));
     // no more available to read
-    try std.testing.expectError(error.ReaderOutOfDataErr, rd.readU8());
+    try std.testing.expectError(BufferError.ReaderOutOfDataErr, rd.readU8());
 
     // write boolean=false
     try buffer.writeBoolean(false);
@@ -289,7 +294,7 @@ test "buffer" {
     try std.testing.expect(std.mem.eql(u8, try rd.readBytes(5), &[_]u8{ 'h', 'e', 'l', 'l', 'o' }));
     try std.testing.expect(try rd.readBoolean() == false);
     // no more available to read
-    try std.testing.expectError(error.ReaderOutOfDataErr, rd.readU8());
+    try std.testing.expectError(BufferError.ReaderOutOfDataErr, rd.readU8());
 
     // write boolean=true
     try buffer.writeBoolean(true);
@@ -305,7 +310,7 @@ test "buffer" {
     try std.testing.expect(try rd.readBoolean() == false);
     try std.testing.expect(try rd.readBoolean() == true);
     // no more available to read
-    try std.testing.expectError(error.ReaderOutOfDataErr, rd.readU8());
+    try std.testing.expectError(BufferError.ReaderOutOfDataErr, rd.readU8());
 
     // write str
     try buffer.writeU32LenString("MOOF");
@@ -322,5 +327,5 @@ test "buffer" {
     try std.testing.expect(try rd.readBoolean() == true);
     try std.testing.expect(std.mem.eql(u8, try rd.readU32LenString(), &[_]u8{ 'M', 'O', 'O', 'F' }));
     // no more available to read
-    try std.testing.expectError(error.ReaderOutOfDataErr, rd.readU8());
+    try std.testing.expectError(BufferError.ReaderOutOfDataErr, rd.readU8());
 }

@@ -34,37 +34,52 @@ MiSSHod requires [Zig 0.14.0](https://ziglang.org/download/).
 To build `mssh`, a command line SSH client for Mac/Linux
 
 ```bash
-    zig build test
+zig build test
 ```
 
 ```bash
-	cd mssh
-	zig build
-	./zig-out/bin/mssh
-	./zig-out/bin/mssh <username@host> <port> [idfile]
+cd mssh
+zig build
+./zig-out/bin/mssh
+./zig-out/bin/mssh <username@host> <port> [idfile]
 ```
 
 To run a test SSH server (dropbear) in docker
 
 ```bash
-	cd testserver
-	./sshserver
+cd testserver
+./sshserver
 ```
 
 Login with password auth, ("password")
 
-	./zig-out/bin/mssh testuser@127.0.0.1 2022
-	# Same as: ssh -p 2022 testuser@127.0.0.1
+```bash
+./zig-out/bin/mssh testuser@127.0.0.1 2022
+# Same as: ssh -p 2022 testuser@127.0.0.1
+```
 
 Login with pubkey auth using a passwordless private key
 
-	./zig-out/bin/mssh testuser@127.0.0.1 2022 ../testserver/id_ed25519_passwordless
-	# Same as: ssh -p 2022 testuser@127.0.0.1 -i ../testserver/id_ed25519_passwordless
+```bash
+./zig-out/bin/mssh testuser@127.0.0.1 2022 ../testserver/id_ed25519_passwordless
+# Same as: ssh -p 2022 testuser@127.0.0.1 -i ../testserver/id_ed25519_passwordless
+```
 
 Login with pubkey auth using a password protected private key ("secretpassword")
 
-	./zig-out/bin/mssh testuser@127.0.0.1 2022 ../testserver/id_ed25519_passworded
-	# Same as: ssh -p 2022 testuser@127.0.0.1 -i ../testserver/id_ed25519_passworded
+```bash
+./zig-out/bin/mssh testuser@127.0.0.1 2022 ../testserver/id_ed25519_passworded
+# Same as: ssh -p 2022 testuser@127.0.0.1 -i ../testserver/id_ed25519_passworded
+```
+# Tiny example
+
+As a proof of concept, the `tiny` example logs into the test server but contains no socket code. Instead, it uses stdout and stdin. To run it via `socat`:
+
+```bash
+zig build && socat TCP4:127.0.0.1:2022 EXEC:./zig-out/bin/tiny
+```
+
+Tiny uses a weaker PRNG, a fixed buffer allocator and does no file I/O.
 
 # Security
 
@@ -83,3 +98,4 @@ MiSSHod was developed rapidly. The main aim was to get it working and learn some
  - The `Session` state machine expects the server to always follow a fixed order of messages, this probably isn't reliable
  - The message passing/event systems are confusing and need to be cleaned up
  - It's entirely undocumented, there aren't enough tests
+
