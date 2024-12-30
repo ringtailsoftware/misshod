@@ -95,7 +95,5 @@ Tiny uses a weaker PRNG, a fixed buffer allocator and does no file I/O.
 
 MiSSHod was developed rapidly. The main aim was to get it working and learn something along the way. I don't know what's next, but hopefully you can learn something too by looking at a small SSH implementation.
 
- - The `Session` state machine expects the server to always follow a fixed order of messages, this probably isn't reliable
- - The message passing/event systems are confusing and need to be cleaned up
- - It's entirely undocumented, there aren't enough tests
+It's entirely undocumented and there aren't enough tests.
 
