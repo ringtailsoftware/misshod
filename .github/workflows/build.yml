@@ -26,4 +26,7 @@ jobs:
       - name: Build mssh
         run: zig build
         working-directory: misshod/mssh
+      - name: Build msshd
+        run: zig build
+        working-directory: misshod/msshd
 
