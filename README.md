@@ -4,7 +4,7 @@
 
 # About
 
-MiSSHod is a minimal, experimental SSH client implemented as a library.
+MiSSHod is a minimal, experimental SSH client and server implemented as a library.
 
 It has been tested with both [OpenSSH](https://github.com/openssh/openssh-portable) and [Dropbear](https://github.com/mkj/dropbear).
 
@@ -30,6 +30,8 @@ It aims to be:
 # Building
 
 MiSSHod requires [Zig 0.14.0](https://ziglang.org/download/). 
+
+## Client
 
 To build `mssh`, a command line SSH client for Mac/Linux
 
@@ -71,7 +73,51 @@ Login with pubkey auth using a password protected private key ("secretpassword")
 ./zig-out/bin/mssh testuser@127.0.0.1 2022 ../testserver/id_ed25519_passworded
 # Same as: ssh -p 2022 testuser@127.0.0.1 -i ../testserver/id_ed25519_passworded
 ```
-# Tiny example
+
+## Server
+
+`msshd` is a toy ssh server. It handles one connection at a time and echoes back received data with "You said X".
+
+To build `msshd`
+
+```bash
+cd msshd
+zig build
+./zig-out/bin/msshd
+./zig-out/bin/msshd <port> <hostkey>
+```
+
+To run the server
+
+```bash
+./zig-out/bin/msshd 2022 ../testserver/id_ed25519_passwordless
+Server listening on port 2022
+```
+
+Connect using OpenSSH
+
+```bash
+ssh -p 2022 foo@127.0.0.1
+```
+
+By default the server will accept any public key offered. Typically, OpenSSH offers all available keys, so it will be able to login immediately. This can be changed in `msshd/src/main.zig`. Typically, a real server would check the user's `authorized_keys` file.
+
+Connect using `mssh` using pubkey auth (key password is "secretpassword")
+
+```bash
+cd mssh
+zig build run -- foo@127.0.0.1 2022 ../testserver/id_ed25519_passworded
+```
+
+Connect using `mssh` using password auth (any password matching username will be accepted, so "foo" here)
+
+```bash
+cd mssh
+zig build run -- foo@127.0.0.1 2022
+```
+
+
+# Tiny client example
 
 As a proof of concept, the `tiny` example logs into the test server but contains no socket code. Instead, it uses stdout and stdin. To run it via `socat`:
 
@@ -95,5 +141,5 @@ Tiny uses a weaker PRNG, a fixed buffer allocator and does no file I/O.
 
 MiSSHod was developed rapidly. The main aim was to get it working and learn something along the way. I don't know what's next, but hopefully you can learn something too by looking at a small SSH implementation.
 
-It's entirely undocumented and there aren't enough tests.
+It's entirely undocumented and there aren't enough tests. The IO systems are a bit arcane, as I've tried wherever possible to avoid using excess RAM.
 

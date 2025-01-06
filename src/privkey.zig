@@ -49,7 +49,7 @@ fn decodeAsciiToBinary(keydata_ascii: []const u8, keydata_bin_buf: []u8) PrivKey
     }
 }
 
-pub fn decodePrivKey(keydata_ascii: []const u8, passphrase_opt: ?[]const u8, privkey_blob: *[srv_hostkey_algo.SecretKey.encoded_length]u8) PrivKeyError!void {
+pub fn decodePrivKey(keydata_ascii: []const u8, passphrase_opt: ?[]const u8, privkey_blob: *[srv_hostkey_algo.SecretKey.encoded_length]u8, pubkey_blob: *[srv_hostkey_algo.PublicKey.encoded_length]u8) PrivKeyError!void {
     var keydata_bin_buf: [1024]u8 = undefined;
     const bin = try decodeAsciiToBinary(keydata_ascii, &keydata_bin_buf);
     TRACEDUMP(.Debug, "raw len={d}", .{bin.len}, bin);
@@ -142,6 +142,8 @@ pub fn decodePrivKey(keydata_ascii: []const u8, passphrase_opt: ?[]const u8, pri
     const key_blob_pub = try encbuffer.readU32LenString();
     TRACEDUMP(.Debug, "key_blob_pub", .{}, key_blob_pub);
 
+    @memcpy(pubkey_blob, key_blob_pub);
+
     const key_blob_prv = try encbuffer.readU32LenString();
     TRACEDUMP(.Debug, "key_blob_prv", .{}, key_blob_prv);
 
@@ -192,13 +194,14 @@ const testkey_encrypted_valid_password = "secretpassword";
 
 test "decodepriv" {
     var blob: [srv_hostkey_algo.SecretKey.encoded_length]u8 = undefined;
+    var pubblob: [srv_hostkey_algo.PublicKey.encoded_length]u8 = undefined;
 
-    try std.testing.expectError(PrivKeyError.BadPrivKey, decodePrivKey(testkey_invalid_bad_preamble, null, &blob));
-    try std.testing.expectError(PrivKeyError.BadPrivKey, decodePrivKey(testkey_invalid_missing_footer, null, &blob));
-    try std.testing.expectError(PrivKeyError.BadPrivKey, decodePrivKey(testkey_invalid_bad_base64, null, &blob));
-    try decodePrivKey(testkey_encrypted_valid_passworded, testkey_encrypted_valid_password, &blob);
-    try std.testing.expectError(PrivKeyError.InvalidKeyDecrypt, decodePrivKey(testkey_encrypted_valid_passworded, "notpassword", &blob));
+    try std.testing.expectError(PrivKeyError.BadPrivKey, decodePrivKey(testkey_invalid_bad_preamble, null, &blob, &pubblob));
+    try std.testing.expectError(PrivKeyError.BadPrivKey, decodePrivKey(testkey_invalid_missing_footer, null, &blob, &pubblob));
+    try std.testing.expectError(PrivKeyError.BadPrivKey, decodePrivKey(testkey_invalid_bad_base64, null, &blob, &pubblob));
+    try decodePrivKey(testkey_encrypted_valid_passworded, testkey_encrypted_valid_password, &blob, &pubblob);
+    try std.testing.expectError(PrivKeyError.InvalidKeyDecrypt, decodePrivKey(testkey_encrypted_valid_passworded, "notpassword", &blob, &pubblob));
     try std.testing.expect(std.mem.eql(u8, &blob, &[_]u8{ 168, 158, 23, 77, 212, 94, 57, 255, 157, 6, 173, 128, 17, 109, 67, 232, 3, 126, 106, 1, 93, 9, 70, 135, 50, 35, 207, 108, 76, 128, 251, 24, 189, 27, 142, 8, 84, 46, 86, 64, 66, 99, 249, 172, 207, 208, 211, 134, 21, 193, 250, 85, 48, 57, 251, 81, 133, 110, 66, 16, 244, 86, 130, 249 }));
-    try decodePrivKey(testkey_valid, null, &blob);
+    try decodePrivKey(testkey_valid, null, &blob, &pubblob);
     try std.testing.expect(std.mem.eql(u8, &blob, &[_]u8{ 166, 119, 186, 89, 114, 101, 152, 133, 196, 14, 211, 238, 206, 143, 73, 223, 41, 101, 45, 196, 132, 150, 240, 240, 41, 82, 229, 54, 152, 193, 40, 220, 232, 131, 168, 235, 233, 3, 218, 50, 159, 159, 165, 94, 166, 155, 49, 203, 223, 47, 9, 101, 69, 137, 215, 186, 3, 175, 96, 21, 112, 247, 116, 245 }));
 }

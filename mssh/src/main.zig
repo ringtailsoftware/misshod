@@ -1,6 +1,6 @@
 const std = @import("std");
 const posix = std.posix;
-const Misshod = @import("misshod").Misshod;
+const MisshodClient = @import("misshod").MisshodClient;
 
 // Turn off echo and read a password
 fn readPassphrase(password_buf: []u8) ![]u8 {
@@ -111,7 +111,7 @@ pub fn main() !void {
             try posix.getrandom(&seed);
             var prng = std.Random.DefaultCsprng.init(seed);
 
-            var misshod = try Misshod.init(prng.random(), user, allocator);
+            var misshod = try MisshodClient.init(prng.random(), user, allocator);
             defer misshod.deinit(allocator);
 
             defer raw_mode_stop();
@@ -204,10 +204,12 @@ pub fn main() !void {
                                     bytes_to_read = iobuf.len;
                                 }
                                 const nbytes = try stream.read(iobuf[0..bytes_to_read]);
-                                std.debug.assert(nbytes > 0);
-                                // misshod may not get as much as it asked for, but it can req more later
-                                //std.debug.print("Can consume {d}\n", .{len});
-                                try misshod.write(iobuf[0..nbytes]);
+                                if (nbytes > 0) {
+                                    // misshod may not get as much as it asked for, but it can req more later
+                                    //std.debug.print("Can consume {d}\n", .{len});
+                                    try misshod.write(iobuf[0..nbytes]);
+                                    continue :outer;
+                                }
                             }
                             if (fds[0].revents & std.posix.POLL.OUT > 0) { // socket is writeable
                                 const towrite = try misshod.peek(4); // get data it wants to send up to a limit
@@ -215,6 +217,7 @@ pub fn main() !void {
                                 //std.debug.print("bytes_written = {d} towrite={d}\n", .{bytes_written, towrite.len});
                                 // socket may not have accepted all of the bytes
                                 try misshod.consumed(bytes_written);
+                                continue :outer;
                             }
                             if (fds[1].revents & std.posix.POLL.IN > 0) { // keyboard data in
                                 const buf = try misshod.getChannelWriteBuffer();
@@ -222,6 +225,7 @@ pub fn main() !void {
                                     const count = stdin_reader.read(buf) catch 0;
                                     if (count > 0) {
                                         try misshod.channelWriteComplete(count);
+                                        continue :outer;
                                     }
                                 }
                             }
